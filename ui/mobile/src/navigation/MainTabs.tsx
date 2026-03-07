@@ -59,6 +59,7 @@ const LiveScreen = wrapLazy(() => import('../screens/LiveScreen'), 'Live');
 const VitalsScreen = wrapLazy(() => import('../screens/VitalsScreen'), 'Vitals');
 const ZonesScreen = wrapLazy(() => import('../screens/ZonesScreen'), 'Zones');
 const MATScreen = wrapLazy(() => import('../screens/MATScreen'), 'MAT');
+const CareScreen = wrapLazy(() => import('../screens/CareScreen'), 'Care');
 const SettingsScreen = wrapLazy(() => import('../screens/SettingsScreen'), 'Settings');
 
 const toIconName = (routeName: keyof MainTabsParamList) => {
@@ -71,6 +72,8 @@ const toIconName = (routeName: keyof MainTabsParamList) => {
       return 'grid';
     case 'MAT':
       return 'shield-checkmark';
+    case 'Care':
+      return 'medkit';
     case 'Settings':
       return 'settings';
     default:
@@ -83,6 +86,7 @@ const screens: ReadonlyArray<{ name: keyof MainTabsParamList; component: React.C
   { name: 'Vitals', component: VitalsScreen },
   { name: 'Zones', component: ZonesScreen },
   { name: 'MAT', component: MATScreen },
+  { name: 'Care', component: CareScreen },
   { name: 'Settings', component: SettingsScreen },
 ];
 

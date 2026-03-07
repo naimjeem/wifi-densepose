@@ -327,6 +327,8 @@ struct AppStateInner {
     /// Set to true when real ESP32/bridge frames arrive on UDP — simulation task
     /// will stop generating data so the real source takes over.
     real_data_active: bool,
+    /// Care Monitor state
+    care_monitor: wifi_densepose_care::detection::care_monitor::CareMonitor,
 }
 
 /// Number of frames retained in `frame_history` for temporal analysis.
@@ -881,6 +883,52 @@ fn parse_netsh_interfaces_output(output: &str) -> Option<(f64, f64, String)> {
     }
 }
 
+/// Feed sensing updates into the care monitor.
+fn process_care_monitor(s: &mut AppStateInner, update: &SensingUpdate) {
+    use wifi_densepose_care::domain::{ActivityLevel, PostureKind, VitalSnapshot};
+    use wifi_densepose_care::detection::care_monitor::SensingFrame;
+    
+    let posture = match update.classification.motion_level.as_str() {
+        "active" => PostureKind::Walking,
+        "present_still" => PostureKind::Sitting, // Or lying depending on height
+        _ => PostureKind::Unknown,
+    };
+    
+    let activity = match update.classification.motion_level.as_str() {
+        "active" => ActivityLevel::Active,
+        "present_still" => ActivityLevel::Stationary,
+        _ => ActivityLevel::Stationary, // Default if absent
+    };
+
+    let motion_score = if update.classification.motion_level == "active" {
+        0.8
+    } else if update.classification.motion_level == "present_still" {
+        0.3
+    } else {
+        0.05
+    };
+    
+    let (br, hr, conf) = if let Some(vs) = &update.vital_signs {
+        let conf = (vs.breathing_confidence + vs.heartbeat_confidence) / 2.0;
+        (vs.breathing_rate_bpm.map(|v| v as f32), vs.heart_rate_bpm.map(|v| v as f32), conf as f32)
+    } else {
+        (None, None, 0.0)
+    };
+    
+    let frame = SensingFrame {
+        resident_id: "resident-1".to_string(), // Default for single-user
+        room: Some("Living Room".to_string()),
+        motion_score,
+        height_norm: 0.5,
+        posture,
+        activity,
+        vitals: VitalSnapshot::new(br, hr, conf),
+        confidence: update.classification.confidence as f32,
+    };
+    
+    let _care_output = s.care_monitor.process(&frame);
+}
+
 async fn windows_wifi_task(state: SharedState, tick_ms: u64) {
     let mut interval = tokio::time::interval(Duration::from_millis(tick_ms));
     let mut seq: u32 = 0;
@@ -1079,6 +1127,8 @@ async fn windows_wifi_task(state: SharedState, tick_ms: u64) {
             update.persons = Some(persons);
         }
 
+        process_care_monitor(&mut s, &update);
+
         if let Ok(json) = serde_json::to_string(&update) {
             let _ = s.tx.send(json);
         }
@@ -1204,6 +1254,8 @@ async fn windows_wifi_fallback_tick(state: &SharedState, seq: u32) {
     if !persons.is_empty() {
         update.persons = Some(persons);
     }
+
+    process_care_monitor(&mut s, &update);
 
     if let Ok(json) = serde_json::to_string(&update) {
         let _ = s.tx.send(json);
@@ -1709,6 +1761,32 @@ fn derive_pose_from_sensing(update: &SensingUpdate) -> Vec<PersonDetection> {
     (0..person_count)
         .map(|idx| derive_single_person_pose(update, idx, person_count))
         .collect()
+}
+
+// ── Care Monitor REST endpoints ──────────────────────────────────────────────
+
+async fn care_alerts(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    let alerts: Vec<_> = s.care_monitor.dispatcher().all_alerts().into_iter().map(|d| d.alert).collect();
+    Json(serde_json::to_value(wifi_densepose_care::api::build_alerts_response(&alerts)).unwrap())
+}
+
+async fn care_alerts_pending(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    let alerts = s.care_monitor.dispatcher().pending_alerts();
+    Json(serde_json::to_value(wifi_densepose_care::api::build_alerts_response(&alerts)).unwrap())
+}
+
+async fn care_alerts_critical(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    let alerts = s.care_monitor.dispatcher().critical_alerts();
+    Json(serde_json::to_value(wifi_densepose_care::api::build_alerts_response(&alerts)).unwrap())
+}
+
+async fn care_alerts_ack(State(state): State<SharedState>, Path(id): Path<String>) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    let success = s.care_monitor.dispatcher().acknowledge(&id);
+    Json(serde_json::json!({ "success": success, "alert_id": id }))
 }
 
 // ── DensePose-compatible REST endpoints ─────────────────────────────────────
@@ -2566,6 +2644,8 @@ async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         update.persons = Some(persons);
                     }
 
+                    process_care_monitor(&mut s, &update);
+
                     if let Ok(json) = serde_json::to_string(&update) {
                         let _ = s.tx.send(json);
                     }
@@ -2686,6 +2766,8 @@ async fn simulated_data_task(state: SharedState, tick_ms: u64) {
         if !persons.is_empty() {
             update.persons = Some(persons);
         }
+
+        process_care_monitor(&mut s, &update);
 
         if update.classification.presence {
             s.total_detections += 1;
@@ -3294,6 +3376,7 @@ async fn main() {
         training_status: "idle".to_string(),
         training_config: None,
         real_data_active: false,
+        care_monitor: wifi_densepose_care::detection::care_monitor::CareMonitor::with_defaults(),
     }));
 
     // Start background tasks based on source
@@ -3384,6 +3467,11 @@ async fn main() {
         .route("/api/v1/train/status", get(train_status))
         .route("/api/v1/train/start", post(train_start))
         .route("/api/v1/train/stop", post(train_stop))
+        // Care endpoints
+        .route("/care/alerts", get(care_alerts))
+        .route("/care/alerts/pending", get(care_alerts_pending))
+        .route("/care/alerts/critical", get(care_alerts_critical))
+        .route("/care/alerts/{id}/ack", post(care_alerts_ack))
         // Static UI files
         .nest_service("/ui", ServeDir::new(&ui_path))
         .layer(SetResponseHeaderLayer::overriding(

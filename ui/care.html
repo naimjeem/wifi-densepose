@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WIFI - DensePose — Care Monitor</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f1117;color:#e4e4e7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
+
+/* Top bar */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;background:#18181b;border-bottom:1px solid #27272a}
+.topbar-left{display:flex;align-items:center;gap:12px}
+.logo{font-size:18px;font-weight:700;background:linear-gradient(135deg,#06b6d4,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.conn-pill{display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:500;background:#27272a}
+.conn-dot{width:7px;height:7px;border-radius:50%}
+.conn-dot.on{background:#22c55e;box-shadow:0 0 8px #22c55e}
+.conn-dot.off{background:#ef4444;box-shadow:0 0 8px #ef4444}
+.conn-dot.wait{background:#eab308;box-shadow:0 0 8px #eab308}
+.topbar-right{display:flex;gap:8px}
+.topbar-right a{color:#a1a1aa;text-decoration:none;font-size:12px;padding:6px 12px;border-radius:6px;transition:all .15s}
+.topbar-right a:hover{color:#e4e4e7;background:#27272a}
+.topbar-right a.active{background:#27272a;color:#fff}
+
+/* Layout */
+.page{max-width:800px;margin:0 auto;padding:24px 20px 60px}
+
+/* Header */
+.page-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;border-bottom:1px solid #27272a;padding-bottom:16px}
+.page-title{font-size:24px;font-weight:700}
+.page-sub{font-size:14px;color:#a1a1aa;margin-top:4px}
+.badge-danger{background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.5);padding:4px 12px;border-radius:8px;font-size:13px;font-weight:600}
+
+/* Status Card */
+.status-card{background:#18181b;border:1px solid rgba(139,92,246,0.3);border-radius:14px;padding:20px;margin-bottom:32px;display:flex;flex-direction:column;gap:16px}
+.status-row{display:flex;align-items:center;gap:12px}
+.posture-icon{font-size:32px}
+.status-info flex{flex:1}
+.status-room{font-size:20px;font-weight:600}
+.status-posture{font-size:13px;color:#a1a1aa;text-transform:capitalize}
+.sleep-badge{padding:4px 10px;border-radius:8px;border:1px solid;font-size:12px;font-weight:600;text-transform:uppercase;margin-left:auto}
+
+.vitals-row{display:flex;gap:12px}
+.vital-chip{flex:1;background:#27272a;border:1px solid #3f3f46;border-radius:10px;padding:12px;text-align:center;display:flex;flex-direction:column;gap:4px}
+.vital-label{font-size:12px;color:#a1a1aa}
+.vital-val{font-size:24px;font-weight:700}
+.vital-unit{font-size:12px;color:#71717a}
+.vital-chip.normal{border-color:#22c55e}
+.vital-chip.warn{border-color:#eab308}
+.vital-chip.danger{border-color:#ef4444}
+.val-normal{color:#22c55e}
+.val-warn{color:#eab308}
+.val-danger{color:#ef4444}
+
+/* Alerts Section */
+.alerts-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.section-title{font-size:14px;font-weight:600;color:#a1a1aa;letter-spacing:1px;text-transform:uppercase}
+.filters{display:flex;gap:8px;align-items:center}
+.filter-btn{background:transparent;border:1px solid #3f3f46;color:#a1a1aa;padding:4px 12px;border-radius:6px;font-size:12px;cursor:pointer;transition:all 0.2s}
+.filter-btn.active{background:rgba(139,92,246,0.15);border-color:#8b5cf6;color:#8b5cf6}
+.filter-btn:hover:not(.active){background:#27272a;color:#fff}
+.ack-all-btn{background:transparent;border:none;color:#71717a;font-size:12px;cursor:pointer;padding:4px 8px}
+.ack-all-btn:hover{color:#e4e4e7}
+
+.alerts-list{display:flex;flex-direction:column;gap:12px}
+.alert-card{background:#18181b;border:1px solid #27272a;border-left:4px solid #3f3f46;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;transition:opacity 0.3s}
+.alert-card.acknowledged{opacity:0.6}
+.alert-top{display:flex;justify-content:space-between;align-items:center}
+.alert-priority-group{display:flex;align-items:center;gap:8px}
+.pulse-dot{width:8px;height:8px;border-radius:50%;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:0.3}50%{opacity:1}}
+.alert-priority{font-size:13px;font-weight:700}
+.alert-room{font-size:12px;color:#a1a1aa}
+.alert-time{font-size:12px;color:#71717a}
+.alert-msg{font-size:15px;color:#e4e4e7}
+.ack-btn{align-self:flex-start;background:transparent;border:1px solid;border-radius:6px;padding:4px 12px;font-size:12px;font-weight:600;cursor:pointer}
+
+.empty-state{text-align:center;padding:48px 0;color:#a1a1aa}
+.empty-icon{font-size:48px;margin-bottom:16px;opacity:0.8}
+
+/* Priority Colors */
+.prio-CRITICAL{color:#ef4444;border-color:#ef4444}
+.bg-CRITICAL{background:#ef4444}
+.border-CRITICAL{border-left-color:#ef4444 !important}
+.prio-HIGH{color:#f97316;border-color:#f97316}
+.bg-HIGH{background:#f97316}
+.border-HIGH{border-left-color:#f97316 !important}
+.prio-MEDIUM{color:#8b5cf6;border-color:#8b5cf6}
+.bg-MEDIUM{background:#8b5cf6}
+.border-MEDIUM{border-left-color:#8b5cf6 !important}
+.prio-LOW{color:#3b82f6;border-color:#3b82f6}
+.bg-LOW{background:#3b82f6}
+.border-LOW{border-left-color:#3b82f6 !important}
+.prio-INFO{color:#71717a;border-color:#71717a}
+.bg-INFO{background:#71717a}
+.border-INFO{border-left-color:#71717a !important}
+
+/* Sleep Colors */
+.sleep-deep{color:#6366f1;border-color:#6366f1;background:rgba(99,102,241,0.1)}
+.sleep-rem{color:#8b5cf6;border-color:#8b5cf6;background:rgba(139,92,246,0.1)}
+.sleep-light{color:#3b82f6;border-color:#3b82f6;background:rgba(59,130,246,0.1)}
+.sleep-awake{color:#22c55e;border-color:#22c55e;background:rgba(34,197,94,0.1)}
+.sleep-unknown{color:#71717a;border-color:#71717a;background:rgba(113,113,122,0.1)}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo">WIFI DensePose</div>
+    <div class="conn-pill">
+      <span class="conn-dot wait" id="dot"></span>
+      <span id="connText">Connecting</span>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <a href="home.html">Home</a>
+    <a href="care.html" class="active">Care</a>
+    <a href="sensing-dashboard.html">Sensing</a>
+    <a href="viz.html">3D Pose</a>
+    <a href="index.html">System</a>
+  </div>
+</div>
+
+<div class="page">
+  <div class="page-header">
+    <div>
+      <div class="page-title">Care Monitor</div>
+      <div class="page-sub">Resident-1 &middot; Home</div>
+    </div>
+    <div id="pendingBadge" class="badge-danger" style="display:none">0 PENDING</div>
+  </div>
+
+  <div class="section-title" style="margin-bottom:8px">LIVE STATUS</div>
+  <div class="status-card" id="statusCard">
+    <div class="status-row">
+      <div class="posture-icon" id="statusIcon">❓</div>
+      <div class="status-info">
+        <div class="status-room" id="statusRoom">Unknown Room</div>
+        <div class="status-posture" id="statusPosture">Waiting for data...</div>
+      </div>
+      <div class="sleep-badge sleep-unknown" id="statusSleep">UNKNOWN</div>
+    </div>
+    <div class="vitals-row">
+      <div class="vital-chip" id="breathChip">
+        <div class="vital-label">Breathing</div>
+        <div class="vital-val" id="breathVal">—</div>
+        <div class="vital-unit">BPM</div>
+      </div>
+      <div class="vital-chip" id="heartChip">
+        <div class="vital-label">Heart Rate</div>
+        <div class="vital-val" id="heartVal">—</div>
+        <div class="vital-unit">BPM</div>
+      </div>
+      <div class="vital-chip normal">
+        <div class="vital-label">Signal</div>
+        <div class="vital-val val-normal" id="signalVal">—</div>
+        <div class="vital-unit">Quality</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="alerts-header">
+    <div class="section-title">ALERTS</div>
+    <div class="filters">
+      <button class="filter-btn active" id="btnFilterPending" onclick="setFilter('pending')">PENDING</button>
+      <button class="filter-btn" id="btnFilterAll" onclick="setFilter('all')">ALL</button>
+      <button class="ack-all-btn" id="btnAckAll" onclick="ackAll()" style="display:none">Ack All</button>
+    </div>
+  </div>
+
+  <div class="alerts-list" id="alertsList">
+    <div class="empty-state">
+      <div class="empty-icon">✅</div>
+      <div>Loading alerts...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentFilter = 'pending';
+let allAlerts = [];
+let pendingCount = 0;
+
+function getIcon(posture) {
+  switch((posture || '').toLowerCase()) {
+    case 'lying': return '🛌';
+    case 'sitting': return '🪑';
+    case 'standing': return '🧍';
+    case 'walking': return '🚶';
+    default: return '❓';
+  }
+}
+
+function getSleepClass(stage) {
+  switch((stage || '').toLowerCase()) {
+    case 'deep': return 'sleep-deep';
+    case 'rem': return 'sleep-rem';
+    case 'light': return 'sleep-light';
+    case 'awake': return 'sleep-awake';
+    default: return 'sleep-unknown';
+  }
+}
+
+function relativeTime(iso) {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+  return `${Math.floor(diff/86400)}d ago`;
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  document.getElementById('btnFilterPending').classList.toggle('active', f === 'pending');
+  document.getElementById('btnFilterAll').classList.toggle('active', f === 'all');
+  renderAlerts();
+}
+
+function renderAlerts() {
+  const list = document.getElementById('alertsList');
+  const filtered = currentFilter === 'pending' ? allAlerts.filter(a => !a.acknowledged) : allAlerts;
+  
+  if (filtered.length === 0) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">✅</div>
+        <div>No ${currentFilter === 'pending' ? 'pending ' : ''}alerts</div>
+      </div>
+    `;
+    return;
+  }
+
+  list.innerHTML = filtered.map(a => `
+    <div class="alert-card border-${a.priority} ${a.acknowledged ? 'acknowledged' : ''}">
+      <div class="alert-top">
+        <div class="alert-priority-group">
+          ${!a.acknowledged ? `<div class="pulse-dot bg-${a.priority}"></div>` : ''}
+          <div class="alert-priority prio-${a.priority}">${a.priority}</div>
+          ${a.room ? `<div class="alert-room">${a.room}</div>` : ''}
+        </div>
+        <div class="alert-time">${relativeTime(a.timestamp)}</div>
+      </div>
+      <div class="alert-msg">${a.message}</div>
+      ${!a.acknowledged ? `
+        <button class="ack-btn prio-${a.priority}" onclick="ackAlert('${a.id}')">Acknowledge</button>
+      ` : ''}
+    </div>
+  `).join('');
+}
+
+function updateBadge() {
+  pendingCount = allAlerts.filter(a => !a.acknowledged).length;
+  const badge = document.getElementById('pendingBadge');
+  const ackAllBtn = document.getElementById('btnAckAll');
+  
+  if (pendingCount > 0) {
+    badge.style.display = 'block';
+    badge.textContent = `${pendingCount} PENDING`;
+    ackAllBtn.style.display = 'block';
+  } else {
+    badge.style.display = 'none';
+    ackAllBtn.style.display = 'none';
+  }
+}
+
+async function fetchAlerts() {
+  try {
+    const res = await fetch('/care/alerts');
+    if (res.ok) {
+      const data = await res.json();
+      allAlerts = data.alerts;
+      updateBadge();
+      renderAlerts();
+    }
+  } catch (err) {
+    console.error('Error fetching alerts:', err);
+  }
+}
+
+async function ackAlert(id) {
+  try {
+    const res = await fetch(`/care/alerts/${id}/ack`, { method: 'POST' });
+    if (res.ok) {
+      fetchAlerts(); // refresh
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function ackAll() {
+  const pendings = allAlerts.filter(a => !a.acknowledged);
+  for (const p of pendings) {
+    await fetch(`/care/alerts/${p.id}/ack`, { method: 'POST' });
+  }
+  fetchAlerts();
+}
+
+// WS Connection for live status updates
+function connectWS() {
+  const dot = document.getElementById('dot');
+  const connText = document.getElementById('connText');
+  
+  const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/sensing';
+  const ws = new WebSocket(wsUrl);
+  
+  ws.onopen = () => {
+    dot.className = 'conn-dot on';
+    connText.textContent = 'Connected';
+    // Initial fetch
+    fetchAlerts();
+  };
+  
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'sensing_update') {
+      // Just refresh alerts on every update for simplicity
+      fetchAlerts();
+      
+      // Update status card based on sensing data (if available)
+      const isPresent = data.classification && data.classification.presence;
+      
+      if (isPresent) {
+        document.getElementById('statusRoom').textContent = 'Living Room';
+        // Posture guess
+        const motion = data.classification.motion_level;
+        let posture = 'Sitting';
+        if (motion === 'active') posture = 'Walking';
+        document.getElementById('statusPosture').textContent = posture;
+        document.getElementById('statusIcon').textContent = getIcon(posture);
+        
+        // Vitals
+        if (data.vital_signs) {
+          const br = data.vital_signs.breathing_rate_bpm;
+          const hr = data.vital_signs.heart_rate_bpm;
+          
+          const brOk = br && br >= 12 && br <= 20;
+          const hrOk = hr && hr >= 50 && hr <= 100;
+          
+          document.getElementById('breathVal').textContent = br ? br.toFixed(1) : '—';
+          document.getElementById('breathVal').className = `vital-val ${brOk ? 'val-normal' : 'val-warn'}`;
+          document.getElementById('breathChip').className = `vital-chip ${brOk ? 'normal' : 'warn'}`;
+          
+          document.getElementById('heartVal').textContent = hr ? hr.toFixed(0) : '—';
+          document.getElementById('heartVal').className = `vital-val ${hrOk ? 'val-normal' : 'val-warn'}`;
+          document.getElementById('heartChip').className = `vital-chip ${hrOk ? 'normal' : 'warn'}`;
+        }
+        
+        // Signal
+        const sq = data.features ? data.features.mean_rssi : -50;
+        document.getElementById('signalVal').textContent = sq.toFixed(1) + ' dBm';
+        
+      } else {
+        document.getElementById('statusRoom').textContent = 'Away';
+        document.getElementById('statusPosture').textContent = 'Absent';
+        document.getElementById('statusIcon').textContent = '❓';
+        document.getElementById('statusSleep').className = 'sleep-badge sleep-unknown';
+        document.getElementById('statusSleep').textContent = 'UNKNOWN';
+        document.getElementById('breathVal').textContent = '—';
+        document.getElementById('heartVal').textContent = '—';
+      }
+    }
+  };
+  
+  ws.onclose = () => {
+    dot.className = 'conn-dot off';
+    connText.textContent = 'Disconnected';
+    setTimeout(connectWS, 3000);
+  };
+}
+
+// Init
+connectWS();
+// Fallback polling if WS doesn't connect quickly
+setInterval(fetchAlerts, 5000);
+</script>
+
+</body>
+</html>

@@ -408,3 +408,120 @@ groups:
           summary: "High model inference latency"
           description: "95th percentile model inference latency is {{ $value }}s for the last 5 minutes."
           runbook_url: "https://docs.wifi-densepose.com/runbooks/high-model-inference-latency"
+
+  - name: wifi-densepose.disability-care
+    rules:
+      # ── Fall detection ──────────────────────────────────────────────────
+      - alert: FallDetected
+        expr: increase(care_alerts_total{kind="FallDetected"}[1m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: wifi-densepose-care
+          team: care
+        annotations:
+          summary: "FALL DETECTED — {{ $labels.resident_id }}"
+          description: "A fall has been detected for resident {{ $labels.resident_id }} in {{ $labels.room }}. Immediate response required."
+
+      - alert: ResidentOnFloorExtended
+        expr: increase(care_alerts_total{kind="FallOnFloorExtended"}[2m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: wifi-densepose-care
+          team: care
+        annotations:
+          summary: "Resident on floor — {{ $labels.resident_id }}"
+          description: "Resident {{ $labels.resident_id }} has been on the floor for an extended period. Emergency assistance may be required."
+
+      # ── Vital sign emergencies ──────────────────────────────────────────
+      - alert: ResidentApnea
+        expr: increase(care_alerts_total{kind="PossibleApnea"}[1m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: wifi-densepose-care
+          team: care
+        annotations:
+          summary: "POSSIBLE APNEA — {{ $labels.resident_id }}"
+          description: "Breathing may have stopped for resident {{ $labels.resident_id }}. Check immediately."
+
+      - alert: SleepApneaEpisode
+        expr: increase(care_alerts_total{kind="SleepApneaEpisode"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: wifi-densepose-care
+          team: care
+        annotations:
+          summary: "Sleep apnea episode — {{ $labels.resident_id }}"
+          description: "A sleep apnea episode was detected for resident {{ $labels.resident_id }}."
+
+      - alert: ResidentTachycardia
+        expr: increase(care_alerts_total{kind="TachycardiaAlert"}[2m]) > 0
+        for: 0m
+        labels:
+          severity: high
+          service: wifi-densepose-care
+          team: care
+        annotations:
+          summary: "High heart rate — {{ $labels.resident_id }}"
+          description: "Elevated heart rate detected for resident {{ $labels.resident_id }}."
+
+      - alert: ResidentBradycardia
+        expr: increase(care_alerts_total{kind="BradycardiaAlert"}[2m]) > 0
+        for: 0m
+        labels:
+          severity: high
+          service: wifi-densepose-care
+          team: care
+        annotations:
+          summary: "Low heart rate — {{ $labels.resident_id }}"
+          description: "Low heart rate detected for resident {{ $labels.resident_id }}."
+
+      # ── Emergency motion ────────────────────────────────────────────────
+      - alert: ResidentDistress
+        expr: increase(care_alerts_total{kind="DistressMotionDetected"}[1m]) > 0
+        for: 0m
+        labels:
+          severity: high
+          service: wifi-densepose-care
+          team: care
+        annotations:
+          summary: "Distress motion — {{ $labels.resident_id }}"
+          description: "Distress movement pattern detected for resident {{ $labels.resident_id }} in {{ $labels.room }}."
+
+      - alert: PossibleSeizure
+        expr: increase(care_alerts_total{kind="PossibleSeizure"}[1m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: wifi-densepose-care
+          team: care
+        annotations:
+          summary: "POSSIBLE SEIZURE — {{ $labels.resident_id }}"
+          description: "Seizure-pattern motion detected for resident {{ $labels.resident_id }}. Call emergency services."
+
+      # ── Inactivity / presence ───────────────────────────────────────────
+      - alert: ResidentInactivity
+        expr: increase(care_alerts_total{kind="InactivityAlert"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: medium
+          service: wifi-densepose-care
+          team: care
+        annotations:
+          summary: "Inactivity alert — {{ $labels.resident_id }}"
+          description: "No activity detected for resident {{ $labels.resident_id }} for an extended period in {{ $labels.room }}."
+
+      # ── Sleep ───────────────────────────────────────────────────────────
+      - alert: RestlessSleep
+        expr: increase(care_alerts_total{kind="RestlessSleep"}[10m]) > 0
+        for: 0m
+        labels:
+          severity: low
+          service: wifi-densepose-care
+          team: care
+        annotations:
+          summary: "Restless sleep — {{ $labels.resident_id }}"
+          description: "Resident {{ $labels.resident_id }} is experiencing restless sleep."

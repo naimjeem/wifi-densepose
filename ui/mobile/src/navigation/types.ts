@@ -7,5 +7,6 @@ export type MainTabsParamList = {
   Vitals: undefined;
   Zones: undefined;
   MAT: undefined;
+  Care: undefined;
   Settings: undefined;
 };

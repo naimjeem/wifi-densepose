@@ -4522,6 +4522,19 @@ name = "wifi-densepose-api"
 version = "0.3.0"
 
 [[package]]
+name = "wifi-densepose-care"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "wifi-densepose-cli"
 version = "0.3.0"
 dependencies = [
@@ -4675,6 +4688,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "wifi-densepose-care",
  "wifi-densepose-wifiscan",
 ]
 
