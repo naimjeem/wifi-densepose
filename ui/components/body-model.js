@@ -415,10 +415,8 @@ export class BodyModel {
     updateJoint('left_ankle', 15);
     updateJoint('right_ankle', 16);
 
-    // Adjust all positions relative to center
-    // Apply global position offset (person location in room)
-    // Shift the body model to world position
-    this.group.position.x = centerX;
+    // Adjust all positions relative to center; world position is applied externally
+    // via BodyModel.setWorldPosition from the manager using world-space coordinates.
   }
 
   _avgCoord(keypoints, indices, coord) {
@@ -537,9 +535,11 @@ export class BodyModel {
     this._materials.bone.opacity = 0.3 + conf * 0.4;
   }
 
-  // Set the world position of this body model (for multi-person scenes)
+  // Set the world position of this body model (for multi-person scenes).
+  // Default y = -0.08 so ankles (local y ≈ 0.08) sit on the floor (world y = 0).
   setWorldPosition(x, y, z) {
-    this.group.position.set(x, y || 0, z || 0);
+    const baseY = y !== undefined && y !== null ? y : -0.08;
+    this.group.position.set(x, baseY, z || 0);
   }
 
   getGroup() {
@@ -591,6 +591,11 @@ export class BodyModelManager {
         // Update the model
         if (person.keypoints) {
           model.updateFromKeypoints(person.keypoints, person.confidence);
+        }
+
+        // Apply world-space position (feet on floor); body model uses baseY so ankles sit at y=0
+        if (person.worldPosition) {
+          model.setWorldPosition(person.worldPosition.x, undefined, person.worldPosition.z);
         }
 
         // Activate DensePose parts if available

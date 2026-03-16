@@ -17,7 +17,10 @@ export class DashboardHUD {
       sensingMode: 'Mock',    // CSI, RSSI, Mock
       latency: 0,
       messageCount: 0,
-      uptime: 0
+      uptime: 0,
+      primaryLocation: null,  // "x.xx m, z.zz m"
+      primaryRoom: null,      // "Room A", "Kitchen", etc.
+      primaryPosture: null    // "Standing", "Walking", "Sitting"
     };
 
     this._fpsFrames = [];
@@ -193,6 +196,13 @@ export class DashboardHUD {
           align-items: flex-end;
           gap: 4px;
         }
+        .hud-live-accuracy {
+          font-size: 9px;
+          color: #6688aa;
+          margin-top: 2px;
+          max-width: 160px;
+          text-align: right;
+        }
         .hud-mode-badge {
           padding: 3px 10px;
           border-radius: 4px;
@@ -294,6 +304,18 @@ export class DashboardHUD {
         <div class="hud-confidence-bar">
           <div class="hud-confidence-fill" id="hud-confidence-fill" style="width: 0%; background: #334455;"></div>
         </div>
+        <div class="hud-row">
+          <span class="hud-label">Location</span>
+          <span class="hud-value" id="hud-location">--</span>
+        </div>
+        <div class="hud-row">
+          <span class="hud-label">Room</span>
+          <span class="hud-value" id="hud-room">--</span>
+        </div>
+        <div class="hud-row">
+          <span class="hud-label">Posture</span>
+          <span class="hud-value" id="hud-posture">--</span>
+        </div>
       </div>
 
       <!-- Bottom-right: sensing mode -->
@@ -302,6 +324,7 @@ export class DashboardHUD {
         <div class="hud-row" style="margin-top: 4px;">
           <span class="hud-label">WiFi DensePose</span>
         </div>
+        <div class="hud-live-accuracy" id="hud-live-accuracy" title="Single-node WiFi: count and position are heuristic; posture is motion-based (walk/stand). Multi-node or trained models improve accuracy."></div>
       </div>
 
       <!-- Controls hint -->
@@ -314,20 +337,24 @@ export class DashboardHUD {
     this.container.appendChild(this.hudElement);
 
     // Cache DOM references
-    this._els = {
-      banner: this.hudElement.querySelector('#hud-banner'),
-      statusDot: this.hudElement.querySelector('#hud-status-dot'),
-      connStatus: this.hudElement.querySelector('#hud-conn-status'),
-      latency: this.hudElement.querySelector('#hud-latency'),
-      msgCount: this.hudElement.querySelector('#hud-msg-count'),
-      uptime: this.hudElement.querySelector('#hud-uptime'),
-      fps: this.hudElement.querySelector('#hud-fps'),
-      frameTime: this.hudElement.querySelector('#hud-frame-time'),
-      personCount: this.hudElement.querySelector('#hud-person-count'),
-      confidence: this.hudElement.querySelector('#hud-confidence'),
-      confidenceFill: this.hudElement.querySelector('#hud-confidence-fill'),
-      modeBadge: this.hudElement.querySelector('#hud-mode-badge')
-    };
+      this._els = {
+        banner: this.hudElement.querySelector('#hud-banner'),
+        statusDot: this.hudElement.querySelector('#hud-status-dot'),
+        connStatus: this.hudElement.querySelector('#hud-conn-status'),
+        latency: this.hudElement.querySelector('#hud-latency'),
+        msgCount: this.hudElement.querySelector('#hud-msg-count'),
+        uptime: this.hudElement.querySelector('#hud-uptime'),
+        fps: this.hudElement.querySelector('#hud-fps'),
+        frameTime: this.hudElement.querySelector('#hud-frame-time'),
+        personCount: this.hudElement.querySelector('#hud-person-count'),
+        confidence: this.hudElement.querySelector('#hud-confidence'),
+        confidenceFill: this.hudElement.querySelector('#hud-confidence-fill'),
+        modeBadge: this.hudElement.querySelector('#hud-mode-badge'),
+        location: this.hudElement.querySelector('#hud-location'),
+        room: this.hudElement.querySelector('#hud-room'),
+        posture: this.hudElement.querySelector('#hud-posture'),
+        liveAccuracy: this.hudElement.querySelector('#hud-live-accuracy')
+      };
   }
 
   // Update state from external data
@@ -419,6 +446,28 @@ export class DashboardHUD {
     const modeLower = (state.sensingMode || 'Mock').toLowerCase();
     this._els.modeBadge.textContent = state.sensingMode.toUpperCase();
     this._els.modeBadge.className = `hud-mode-badge ${modeLower}`;
+
+    // Live mode: show short accuracy note (count, posture, position are estimates)
+    if (this._els.liveAccuracy) {
+      if (state.isRealData) {
+        this._els.liveAccuracy.textContent = 'Count, posture & position are estimates';
+        this._els.liveAccuracy.style.display = 'block';
+      } else {
+        this._els.liveAccuracy.textContent = '';
+        this._els.liveAccuracy.style.display = 'none';
+      }
+    }
+
+    // Primary person location/room/posture (if available)
+    if (this._els.location) {
+      this._els.location.textContent = state.primaryLocation || '--';
+    }
+    if (this._els.room) {
+      this._els.room.textContent = state.primaryRoom || '--';
+    }
+    if (this._els.posture) {
+      this._els.posture.textContent = state.primaryPosture || '--';
+    }
   }
 
   dispose() {

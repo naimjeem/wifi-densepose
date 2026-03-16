@@ -212,6 +212,10 @@ struct SensingUpdate {
     /// Estimated person count from CSI feature heuristics (1-3 for single ESP32).
     #[serde(skip_serializing_if = "Option::is_none")]
     estimated_persons: Option<usize>,
+    /// Optional world position [x, z] in meters for UI room layout (matches 10m x 8m flat).
+    /// When set, skeleton keypoints are placed so the UI maps them to this room position.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    room_position: Option<[f64; 2]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,6 +269,9 @@ struct PersonDetection {
     keypoints: Vec<PoseKeypoint>,
     bbox: BoundingBox,
     zone: String,
+    /// Activity/posture from signal: "Walking", "Standing", or "Sitting" (best-effort from motion_level).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pose_state: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1288,6 +1295,7 @@ async fn windows_wifi_task(state: SharedState, tick_ms: u64) {
             model_status: None,
             persons: None,
             estimated_persons: if est_persons > 0 { Some(est_persons) } else { None },
+            room_position: None,
         };
 
         // Populate persons from the sensing update.
@@ -1418,6 +1426,7 @@ async fn windows_wifi_fallback_tick(state: &SharedState, seq: u32) {
         model_status: None,
         persons: None,
         estimated_persons: if est_persons > 0 { Some(est_persons) } else { None },
+        room_position: None,
     };
 
     let persons = derive_pose_from_sensing(&update);
@@ -1598,6 +1607,11 @@ async fn handle_ws_pose_client(mut socket: WebSocket, state: SharedState) {
                                             bbox: BoundingBox { x: 260.0, y: 150.0, width: 120.0, height: 220.0 },
                                             keypoints,
                                             zone: "zone_1".into(),
+                                            pose_state: Some(if sensing.classification.motion_level == "active" {
+                                                "Walking".into()
+                                            } else {
+                                                "Standing".into()
+                                            }),
                                         }]
                                     }).unwrap_or_else(|| derive_pose_from_sensing(&sensing))
                                 } else {
@@ -1727,13 +1741,15 @@ fn compute_person_score(feat: &FeatureInfo) -> f64 {
 
 /// Convert smoothed person score to discrete count with hysteresis.
 ///
-/// Uses asymmetric thresholds: higher threshold to add a person, lower to remove.
-/// This prevents flickering at the boundary.
+/// Tracks more than 2 persons: 3–5 when activity/variance is high (e.g. multi-person
+/// or very dynamic single person). Uses asymmetric thresholds to prevent flickering.
+/// Single-ESP32 link: 1–2 reliable; 3+ speculative (needs ≥3 nodes for better resolution).
 fn score_to_person_count(smoothed_score: f64) -> usize {
-    // Thresholds chosen conservatively for single-ESP32 link:
-    //   score > 0.50 → 2 persons (needs sustained high variance + change points)
-    //   score > 0.80 → 3 persons (very high activity, rare with single link)
-    if smoothed_score > 0.80 {
+    if smoothed_score > 0.96 {
+        5
+    } else if smoothed_score > 0.92 {
+        4
+    } else if smoothed_score > 0.80 {
         3
     } else if smoothed_score > 0.50 {
         2
@@ -1796,9 +1812,23 @@ fn derive_single_person_pose(
     let base_confidence = cls.confidence * (0.6 + 0.4 * snr_factor) * conf_decay;
 
     // ── Skeleton base position ────────────────────────────────────────────────
-
-    let base_x = 320.0 + stride_x + lean_x * 0.5 + person_x_offset;
-    let base_y = 240.0 - motion_score * 8.0;
+    // When room_position is set (e.g. simulated path), place skeleton so UI maps to that world (x,z).
+    // UI: norm = pixel/640 (x), pixel/480 (z); world = (norm - 0.5) * room; room 10x8.
+    const ROOM_W: f64 = 10.0;
+    const ROOM_D: f64 = 8.0;
+    let (base_x, base_y) = if let Some([wx, wz]) = update.room_position {
+        let norm_x = wx / ROOM_W + 0.5;
+        let norm_z = wz / ROOM_D + 0.5;
+        (
+            (norm_x * 640.0) + stride_x + lean_x * 0.5 + person_x_offset,
+            (norm_z * 480.0) - motion_score * 8.0,
+        )
+    } else {
+        (
+            320.0 + stride_x + lean_x * 0.5 + person_x_offset,
+            240.0 - motion_score * 8.0,
+        )
+    };
 
     // ── COCO 17-keypoint offsets from hip-center ──────────────────────────────
 
@@ -1903,6 +1933,17 @@ fn derive_single_person_pose(
     let max_x = xs.iter().cloned().fold(f64::MIN, f64::max) + 10.0;
     let max_y = ys.iter().cloned().fold(f64::MIN, f64::max) + 10.0;
 
+    // Map motion_level to pose_state for UI (best-effort; not vision-grade posture).
+    let pose_state = if is_walking {
+        Some("Walking".to_string())
+    } else if cls.motion_level == "present_still" {
+        Some("Standing".to_string())
+    } else if cls.motion_level == "active" {
+        Some("Walking".to_string())
+    } else {
+        Some("Standing".to_string())
+    };
+
     PersonDetection {
         id: (person_idx + 1) as u32,
         confidence: cls.confidence * conf_decay,
@@ -1914,6 +1955,7 @@ fn derive_single_person_pose(
             height: (max_y - min_y).max(160.0),
         },
         zone: format!("zone_{}", person_idx + 1),
+        pose_state,
     }
 }
 
@@ -2869,6 +2911,7 @@ async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         model_status: None,
                         persons: None,
                         estimated_persons: if est_persons > 0 { Some(est_persons) } else { None },
+                        room_position: None,
                     };
 
                     let persons = derive_pose_from_sensing(&update);
@@ -2888,6 +2931,41 @@ async fn udp_receiver_task(state: SharedState, udp_port: u16) {
             }
         }
     }
+}
+
+/// Simulated path through the flat (same as UI demo): Living -> Hallway -> Bedroom 1 -> Hallway -> Bedroom 2 -> Kitchen -> Living.
+/// Returns (world_x, world_z, in_empty_phase). Path 24s, empty 3s.
+fn simulated_room_path(tick: u64, tick_ms: u64) -> (f64, f64, bool) {
+    let elapsed_sec = (tick as f64) * (tick_ms as f64) / 1000.0;
+    const PATH_SEC: f64 = 24.0;
+    const EMPTY_SEC: f64 = 3.0;
+    let cycle = PATH_SEC + EMPTY_SEC;
+    let phase = elapsed_sec % cycle;
+    let in_empty = phase >= PATH_SEC;
+    if in_empty {
+        return (0.0, 0.0, true);
+    }
+    let t = phase / PATH_SEC;
+    // Waypoints: [x, z] Living, Hallway, Bedroom 1, Hallway, Bedroom 2, Kitchen, Living
+    let waypoints: [(f64, f64); 7] = [
+        (0.0, -1.5),
+        (0.0, 0.5),
+        (-2.5, 2.0),
+        (0.0, 0.5),
+        (2.5, 2.0),
+        (2.75, -1.5),
+        (0.0, -1.5),
+    ];
+    let n = waypoints.len() - 1;
+    let seg = 1.0 / (n as f64);
+    let seg_idx = (t / seg).floor().min((n - 1) as f64) as usize;
+    let local_t = (t - seg_idx as f64 * seg) / seg;
+    let smooth_t = local_t * local_t * (3.0 - 2.0 * local_t);
+    let (ax, az) = waypoints[seg_idx];
+    let (bx, bz) = waypoints[seg_idx + 1];
+    let x = ax + (bx - ax) * smooth_t;
+    let z = az + (bz - az) * smooth_t;
+    (x, z, false)
 }
 
 // ── Simulated data task ──────────────────────────────────────────────────────
@@ -2944,13 +3022,28 @@ async fn simulated_data_task(state: SharedState, tick_ms: u64) {
         let frame_amplitudes = frame.amplitudes.clone();
         let frame_n_sub = frame.n_subcarriers;
 
+        // Simulated path: person moves through rooms; brief empty phase so UI shows varying count/room.
+        let (path_x, path_z, in_empty_phase) = simulated_room_path(tick, tick_ms);
+        let mut classification = classification;
+        if in_empty_phase {
+            classification.presence = false;
+        }
+
         // Multi-person estimation with temporal smoothing.
         let raw_score = compute_person_score(&features);
         s.smoothed_person_score = s.smoothed_person_score * 0.85 + raw_score * 0.15;
-        let est_persons = if classification.presence {
+        let est_persons = if in_empty_phase {
+            0
+        } else if classification.presence {
             score_to_person_count(s.smoothed_person_score)
         } else {
             0
+        };
+
+        let room_position = if in_empty_phase {
+            None
+        } else {
+            Some([path_x, path_z])
         };
 
         let mut update = SensingUpdate {
@@ -2992,6 +3085,7 @@ async fn simulated_data_task(state: SharedState, tick_ms: u64) {
             },
             persons: None,
             estimated_persons: if est_persons > 0 { Some(est_persons) } else { None },
+            room_position,
         };
 
         // Populate persons from the sensing update.
