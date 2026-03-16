@@ -26,6 +26,11 @@
 #include "power_mgmt.h"
 #include "wasm_runtime.h"
 #include "wasm_upload.h"
+#include "display_task.h"
+#include "mmwave_sensor.h"
+#ifdef CONFIG_CSI_MOCK_ENABLED
+#include "mock_csi.h"
+#endif
 
 #include "esp_timer.h"
 
@@ -133,17 +138,35 @@ void app_main(void)
 
     ESP_LOGI(TAG, "ESP32-S3 CSI Node (ADR-018) — Node ID: %d", g_nvs_config.node_id);
 
-    /* Initialize WiFi STA */
+    /* Initialize WiFi STA (skip entirely under QEMU mock — no RF hardware) */
+#ifndef CONFIG_CSI_MOCK_SKIP_WIFI_CONNECT
     wifi_init_sta();
+#else
+    ESP_LOGI(TAG, "Mock CSI mode: skipping WiFi init (CONFIG_CSI_MOCK_SKIP_WIFI_CONNECT)");
+#endif
 
     /* Initialize UDP sender with runtime target */
+#ifdef CONFIG_CSI_MOCK_SKIP_WIFI_CONNECT
+    ESP_LOGI(TAG, "Mock CSI mode: skipping UDP sender init (no network)");
+#else
     if (stream_sender_init_with(g_nvs_config.target_ip, g_nvs_config.target_port) != 0) {
         ESP_LOGE(TAG, "Failed to initialize UDP sender");
         return;
     }
+#endif
 
     /* Initialize CSI collection */
+#ifdef CONFIG_CSI_MOCK_ENABLED
+    /* ADR-061: Start mock CSI generator (replaces real WiFi CSI in QEMU) */
+    esp_err_t mock_ret = mock_csi_init(CONFIG_CSI_MOCK_SCENARIO);
+    if (mock_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Mock CSI init failed: %s", esp_err_to_name(mock_ret));
+    } else {
+        ESP_LOGI(TAG, "Mock CSI active (scenario=%d)", CONFIG_CSI_MOCK_SCENARIO);
+    }
+#else
     csi_collector_init();
+#endif
 
     /* ADR-039: Initialize edge processing pipeline. */
     edge_config_t edge_cfg = {
@@ -161,12 +184,17 @@ void app_main(void)
                  esp_err_to_name(edge_ret));
     }
 
-    /* Initialize OTA update HTTP server. */
+    /* Initialize OTA update HTTP server (requires network). */
     httpd_handle_t ota_server = NULL;
+#ifndef CONFIG_CSI_MOCK_SKIP_WIFI_CONNECT
     esp_err_t ota_ret = ota_update_init_ex(&ota_server);
     if (ota_ret != ESP_OK) {
         ESP_LOGW(TAG, "OTA server init failed: %s", esp_err_to_name(ota_ret));
     }
+#else
+    esp_err_t ota_ret = ESP_ERR_NOT_SUPPORTED;
+    ESP_LOGI(TAG, "Mock CSI mode: skipping OTA server (no network)");
+#endif
 
     /* ADR-040: Initialize WASM programmable sensing runtime. */
     esp_err_t wasm_ret = wasm_runtime_init();
@@ -200,14 +228,35 @@ void app_main(void)
         }
     }
 
+    /* ADR-063: Initialize mmWave sensor (auto-detect on UART). */
+    esp_err_t mmwave_ret = mmwave_sensor_init(-1, -1);  /* -1 = use default GPIO pins */
+    if (mmwave_ret == ESP_OK) {
+        mmwave_state_t mw;
+        if (mmwave_sensor_get_state(&mw)) {
+            ESP_LOGI(TAG, "mmWave sensor: %s (caps=0x%04x)",
+                     mmwave_type_name(mw.type), mw.capabilities);
+        }
+    } else {
+        ESP_LOGI(TAG, "No mmWave sensor detected (CSI-only mode)");
+    }
+
     /* Initialize power management. */
     power_mgmt_init(g_nvs_config.power_duty);
 
-    ESP_LOGI(TAG, "CSI streaming active → %s:%d (edge_tier=%u, OTA=%s, WASM=%s)",
+    /* ADR-045: Start AMOLED display task (gracefully skips if no display). */
+#ifdef CONFIG_DISPLAY_ENABLE
+    esp_err_t disp_ret = display_task_start();
+    if (disp_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Display init returned: %s", esp_err_to_name(disp_ret));
+    }
+#endif
+
+    ESP_LOGI(TAG, "CSI streaming active → %s:%d (edge_tier=%u, OTA=%s, WASM=%s, mmWave=%s)",
              g_nvs_config.target_ip, g_nvs_config.target_port,
              g_nvs_config.edge_tier,
              (ota_ret == ESP_OK) ? "ready" : "off",
-             (wasm_ret == ESP_OK) ? "ready" : "off");
+             (wasm_ret == ESP_OK) ? "ready" : "off",
+             (mmwave_ret == ESP_OK) ? "active" : "off");
 
     /* Main loop — keep alive */
     while (1) {

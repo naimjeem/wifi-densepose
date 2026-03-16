@@ -18,6 +18,7 @@
  */
 
 #include "edge_processing.h"
+#include "mmwave_sensor.h"
 #include "wasm_runtime.h"
 #include "stream_sender.h"
 
@@ -243,6 +244,10 @@ static uint32_t s_frame_count;
 
 /** Previous phase velocity for fall detection (acceleration). */
 static float s_prev_phase_velocity;
+
+/** Fall detection debounce state (issue #263). */
+static uint8_t  s_fall_consec_count;   /**< Consecutive frames above threshold. */
+static int64_t  s_fall_last_alert_us;  /**< Timestamp of last fall alert (debounce). */
 
 /** Adaptive calibration state. */
 static bool     s_calibrated;
@@ -573,8 +578,58 @@ static void send_vitals_packet(void)
     s_latest_pkt = pkt;
     s_pkt_valid = true;
 
-    /* Send over UDP. */
-    stream_sender_send((const uint8_t *)&pkt, sizeof(pkt));
+    /* ADR-063: If mmWave is active, send fused 48-byte packet instead. */
+    mmwave_state_t mw;
+    if (mmwave_sensor_get_state(&mw) && mw.detected) {
+        edge_fused_vitals_pkt_t fpkt;
+        memset(&fpkt, 0, sizeof(fpkt));
+
+        fpkt.magic = EDGE_FUSED_MAGIC;
+        fpkt.node_id = pkt.node_id;
+        fpkt.flags = pkt.flags;
+        if (mw.person_present) fpkt.flags |= 0x08;  /* Bit3 = mmwave_present */
+        fpkt.rssi = pkt.rssi;
+        fpkt.n_persons = pkt.n_persons;
+        fpkt.mmwave_type = (uint8_t)mw.type;
+        fpkt.motion_energy = pkt.motion_energy;
+        fpkt.presence_score = pkt.presence_score;
+        fpkt.timestamp_ms = pkt.timestamp_ms;
+
+        /* Kalman-style fusion: prefer mmWave when available, CSI as fallback. */
+        if (mw.heart_rate_bpm > 0.0f && s_heartrate_bpm > 0.0f) {
+            /* Weighted average: mmWave 80%, CSI 20% (mmWave is more accurate). */
+            float fused_hr = mw.heart_rate_bpm * 0.8f + s_heartrate_bpm * 0.2f;
+            fpkt.heartrate = (uint32_t)(fused_hr * 10000.0f);
+            fpkt.fusion_confidence = 90;
+        } else if (mw.heart_rate_bpm > 0.0f) {
+            fpkt.heartrate = (uint32_t)(mw.heart_rate_bpm * 10000.0f);
+            fpkt.fusion_confidence = 85;
+        } else {
+            fpkt.heartrate = pkt.heartrate;
+            fpkt.fusion_confidence = 50;
+        }
+
+        if (mw.breathing_rate > 0.0f && s_breathing_bpm > 0.0f) {
+            float fused_br = mw.breathing_rate * 0.8f + s_breathing_bpm * 0.2f;
+            fpkt.breathing_rate = (uint16_t)(fused_br * 100.0f);
+        } else if (mw.breathing_rate > 0.0f) {
+            fpkt.breathing_rate = (uint16_t)(mw.breathing_rate * 100.0f);
+        } else {
+            fpkt.breathing_rate = pkt.breathing_rate;
+        }
+
+        /* Raw mmWave values for server-side analysis. */
+        fpkt.mmwave_hr_bpm = mw.heart_rate_bpm;
+        fpkt.mmwave_br_bpm = mw.breathing_rate;
+        fpkt.mmwave_distance = mw.distance_cm;
+        fpkt.mmwave_targets = mw.target_count;
+        fpkt.mmwave_confidence = (mw.frame_count > 10) ? 80 : 40;
+
+        stream_sender_send((const uint8_t *)&fpkt, sizeof(fpkt));
+    } else {
+        /* No mmWave — send standard 32-byte packet. */
+        stream_sender_send((const uint8_t *)&pkt, sizeof(pkt));
+    }
 }
 
 /* ======================================================================
@@ -689,7 +744,7 @@ static void process_frame(const edge_ring_slot_t *slot)
     }
     s_presence_detected = (s_presence_score > threshold);
 
-    /* --- Step 10: Fall detection (phase acceleration) --- */
+    /* --- Step 10: Fall detection (phase acceleration + debounce, issue #263) --- */
     if (s_history_len >= 3) {
         uint16_t i0 = (s_history_idx + EDGE_PHASE_HISTORY_LEN - 1) % EDGE_PHASE_HISTORY_LEN;
         uint16_t i1 = (s_history_idx + EDGE_PHASE_HISTORY_LEN - 2) % EDGE_PHASE_HISTORY_LEN;
@@ -697,10 +752,26 @@ static void process_frame(const edge_ring_slot_t *slot)
         float accel = fabsf(velocity - s_prev_phase_velocity);
         s_prev_phase_velocity = velocity;
 
-        s_fall_detected = (accel > s_cfg.fall_thresh);
-        if (s_fall_detected) {
-            ESP_LOGW(TAG, "Fall detected! accel=%.4f > thresh=%.4f",
-                     accel, s_cfg.fall_thresh);
+        if (accel > s_cfg.fall_thresh) {
+            s_fall_consec_count++;
+        } else {
+            s_fall_consec_count = 0;
+        }
+
+        /* Require EDGE_FALL_CONSEC_MIN consecutive frames above threshold,
+         * plus a cooldown period to prevent alert storms. */
+        int64_t now_us = esp_timer_get_time();
+        int64_t cooldown_us = (int64_t)EDGE_FALL_COOLDOWN_MS * 1000;
+        if (s_fall_consec_count >= EDGE_FALL_CONSEC_MIN
+            && (now_us - s_fall_last_alert_us) >= cooldown_us)
+        {
+            s_fall_detected = true;
+            s_fall_last_alert_us = now_us;
+            s_fall_consec_count = 0;
+            ESP_LOGW(TAG, "Fall detected! accel=%.4f > thresh=%.4f (consec=%u)",
+                     accel, s_cfg.fall_thresh, EDGE_FALL_CONSEC_MIN);
+        } else if (s_fall_consec_count == 0) {
+            s_fall_detected = false;
         }
     }
 
@@ -767,6 +838,12 @@ static void edge_task(void *arg)
     while (1) {
         if (ring_pop(&slot)) {
             process_frame(&slot);
+            /* Yield after every frame to feed the Core 1 watchdog.
+             * process_frame() is CPU-intensive (biquad filters, Welford stats,
+             * BPM estimation, multi-person vitals) and can take several ms.
+             * Without this yield, edge_dsp at priority 5 starves IDLE1 at
+             * priority 0, triggering the task watchdog. See issue #266. */
+            vTaskDelay(1);
         } else {
             /* No frames available — yield briefly. */
             vTaskDelay(pdMS_TO_TICKS(1));
@@ -850,6 +927,8 @@ esp_err_t edge_processing_init(const edge_config_t *cfg)
     s_latest_rssi = 0;
     s_frame_count = 0;
     s_prev_phase_velocity = 0.0f;
+    s_fall_consec_count = 0;
+    s_fall_last_alert_us = 0;
     s_last_vitals_send_us = 0;
     s_has_prev_iq = false;
     s_prev_iq_len = 0;

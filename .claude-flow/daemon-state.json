@@ -1,6 +1,6 @@
 {
   "running": true,
-  "startedAt": "2026-02-28T15:54:19.353Z",
+  "startedAt": "2026-03-09T15:26:00.921Z",
   "workers": {
     "map": {
       "runCount": 49,
@@ -8,16 +8,16 @@
       "failureCount": 0,
       "averageDurationMs": 1.2857142857142858,
       "lastRun": "2026-02-28T16:13:19.194Z",
-      "nextRun": "2026-02-28T16:28:19.195Z",
+      "nextRun": "2026-03-09T15:56:00.928Z",
       "isRunning": false
     },
     "audit": {
-      "runCount": 44,
+      "runCount": 45,
       "successCount": 0,
-      "failureCount": 44,
+      "failureCount": 45,
       "averageDurationMs": 0,
-      "lastRun": "2026-02-28T16:20:19.184Z",
-      "nextRun": "2026-02-28T16:30:19.185Z",
+      "lastRun": "2026-03-09T15:43:00.933Z",
+      "nextRun": "2026-03-09T15:38:00.914Z",
       "isRunning": false
     },
     "optimize": {
@@ -26,7 +26,7 @@
       "failureCount": 34,
       "averageDurationMs": 0,
       "lastRun": "2026-02-28T16:23:19.387Z",
-      "nextRun": "2026-02-28T16:18:19.361Z",
+      "nextRun": "2026-03-09T15:45:00.915Z",
       "isRunning": false
     },
     "consolidate": {
@@ -35,7 +35,7 @@
       "failureCount": 0,
       "averageDurationMs": 0.6521739130434783,
       "lastRun": "2026-02-28T16:05:19.091Z",
-      "nextRun": "2026-02-28T16:35:19.054Z",
+      "nextRun": "2026-03-09T16:02:00.918Z",
       "isRunning": false
     },
     "testgaps": {
@@ -44,8 +44,8 @@
       "failureCount": 27,
       "averageDurationMs": 0,
       "lastRun": "2026-02-28T16:08:19.369Z",
-      "nextRun": "2026-02-28T16:22:19.355Z",
-      "isRunning": true
+      "nextRun": "2026-03-09T15:54:00.920Z",
+      "isRunning": false
     },
     "predict": {
       "runCount": 0,
@@ -64,8 +64,8 @@
   },
   "config": {
     "autoStart": false,
-    "logDir": "/home/user/wifi-densepose/.claude-flow/logs",
-    "stateFile": "/home/user/wifi-densepose/.claude-flow/daemon-state.json",
+    "logDir": "/Users/cohen/GitHub/ruvnet/RuView/.claude-flow/logs",
+    "stateFile": "/Users/cohen/GitHub/ruvnet/RuView/.claude-flow/daemon-state.json",
     "maxConcurrent": 2,
     "workerTimeoutMs": 300000,
     "resourceThresholds": {
@@ -131,5 +131,5 @@
       }
     ]
   },
-  "savedAt": "2026-02-28T16:23:19.387Z"
+  "savedAt": "2026-03-09T15:43:00.933Z"
 }
